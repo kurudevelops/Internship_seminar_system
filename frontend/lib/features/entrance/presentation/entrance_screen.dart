@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/models/attendee_model.dart';
 import '../data/entrance_repository.dart';
+import '../../../core/network/realtime_sync_service.dart';
 
 class EntranceScreen extends StatefulWidget {
   final VoidCallback onSwitchRole;
@@ -16,6 +17,7 @@ class EntranceScreen extends StatefulWidget {
 
 class _EntranceScreenState extends State<EntranceScreen> {
   final EntranceRepository _repo = EntranceRepository();
+  late final RealtimeSyncService _realtimeSync;
   int _tabIndex = 0;
 
   // Lookup & Check-In State
@@ -42,24 +44,34 @@ class _EntranceScreenState extends State<EntranceScreen> {
 
   @override
   void initState() {
-    super.initState();
-    _feeCtrl = TextEditingController(
-      text: AppConfig.defaultSeminarFee.toStringAsFixed(2),
-    );
-    _loadRoster();
-  }
+  super.initState();
+  _feeCtrl = TextEditingController(
+    text: AppConfig.defaultSeminarFee.toStringAsFixed(2),
+  );
+  _loadRoster();
+  // Automatically syncs new walk-ins & check-ins from other ushers every 4 seconds
+  _realtimeSync = RealtimeSyncService(
+    onSyncRequested: () {
+      _loadRoster(silent: true);
+      if (_tabIndex == 1) {   
+        _checkDuplicateLive(silent: true);
+      }
+    },
+  )..start(interval: const Duration(seconds: 4));
+}
 
   @override
   void dispose() {
-    _debounce?.cancel();
-    _dupTimer?.cancel();
-    _searchCtrl.dispose();
-    _idCtrl.dispose();
-    _nameCtrl.dispose();
-    _emailCtrl.dispose();
-    _sectionCtrl.dispose();
-    _feeCtrl.dispose();
-    super.dispose();
+  _realtimeSync.stop();
+  _debounce?.cancel();
+  _dupTimer?.cancel();
+  _searchCtrl.dispose();
+  _idCtrl.dispose();
+  _nameCtrl.dispose();
+  _emailCtrl.dispose();
+  _sectionCtrl.dispose();
+  _feeCtrl.dispose();
+  super.dispose();
   }
 
   void _notify(String msg, {bool isError = false}) {
@@ -87,17 +99,25 @@ class _EntranceScreenState extends State<EntranceScreen> {
     }
   }
 
-  Future<void> _loadRoster() async {
+  Future<void> _loadRoster({bool silent = false}) async {
+  if (!silent) {
     setState(() => _isLoading = true);
-    try {
-      final list = await _repo.searchRoster(_searchCtrl.text);
+  }
+  try {
+    final list = await _repo.searchRoster(_searchCtrl.text);
+    if (mounted) {
       setState(() => _roster = list);
-    } catch (e) {
+    }
+  } catch (e) {
+    if (!silent) {
       _notify(e.toString(), isError: true);
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+    }
+  } finally {
+    if (mounted && !silent) {
+      setState(() => _isLoading = false);
     }
   }
+}
 
   List<AttendeeModel> get _filteredRoster {
     return _roster.where((item) {
@@ -132,27 +152,31 @@ class _EntranceScreenState extends State<EntranceScreen> {
         Timer(const Duration(milliseconds: 350), _checkDuplicateLive);
   }
 
-  Future<void> _checkDuplicateLive() async {
-    final sid = _idCtrl.text.trim();
-    final email = _emailCtrl.text.trim();
-    if (sid.isEmpty && email.isEmpty) {
-      setState(() {
-        _duplicateMatch = null;
-        _isCheckingDuplicate = false;
-      });
-      return;
-    }
+Future<void> _checkDuplicateLive({bool silent = false}) async {
+  final sid = _idCtrl.text.trim();
+  final email = _emailCtrl.text.trim();
+  if (sid.isEmpty && email.isEmpty) {
+    setState(() {
+      _duplicateMatch = null;
+      _isCheckingDuplicate = false;
+    });
+    return;
+  }
+  if (!silent) {
     setState(() => _isCheckingDuplicate = true);
-    try {
-      final res = await _repo.verifyOnline(studentId: sid, email: email);
-      if (mounted) {
-        setState(() => _duplicateMatch = res.registered ? res.attendee : null);
-      }
-    } catch (_) {
-    } finally {
-      if (mounted) setState(() => _isCheckingDuplicate = false);
+  }
+  try {
+    final res = await _repo.verifyOnline(studentId: sid, email: email);
+    if (mounted) {
+      setState(() => _duplicateMatch = res.registered ? res.attendee : null);
+    }
+  } catch (_) {
+  } finally {
+    if (mounted && !silent) {
+      setState(() => _isCheckingDuplicate = false);
     }
   }
+}
 
   Future<void> _submitWalkIn() async {
     if (!_formKey.currentState!.validate()) return;

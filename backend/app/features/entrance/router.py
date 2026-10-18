@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from app.core.database import supabase
+from app.core.realtime import realtime_manager
 from app.features.entrance.schemas import (
     EntranceAttendanceRequest,
     EntranceWalkInRequest,
@@ -82,7 +83,7 @@ def verify_online_registration(
 
 
 @router.post("/walk-in")
-def create_walk_in_at_entrance(payload: EntranceWalkInRequest):
+async def create_walk_in_at_entrance(payload: EntranceWalkInRequest):
     sid = payload.student_id.strip()
     name = payload.full_name.strip()
     email = payload.email.strip().lower()
@@ -130,6 +131,9 @@ def create_walk_in_at_entrance(payload: EntranceWalkInRequest):
     if not ins.data:
         raise HTTPException(status_code=500, detail="Could not create walk-in record.")
 
+    # Broadcast instant update to all other Entrance, Admin, and Finance screens
+    await realtime_manager.broadcast_update("WALK_IN_CREATED")
+
     return {
         "message": f"Walk-in registered: {name}",
         "data": ins.data[0],
@@ -137,7 +141,7 @@ def create_walk_in_at_entrance(payload: EntranceWalkInRequest):
 
 
 @router.patch("/check-in/{student_id}")
-def entrance_set_attendance(student_id: str, payload: EntranceAttendanceRequest):
+async def entrance_set_attendance(student_id: str, payload: EntranceAttendanceRequest):
     sid = student_id.strip()
     res = supabase.table("seminar_attendees").select("*").eq("student_id", sid).execute()
     if not res.data:
@@ -154,6 +158,10 @@ def entrance_set_attendance(student_id: str, payload: EntranceAttendanceRequest)
         .eq("student_id", sid)
         .execute()
     )
+
+    # Broadcast instant update to all other Entrance, Admin, and Finance screens
+    await realtime_manager.broadcast_update("ATTENDANCE_UPDATED")
+
     status_label = "PRESENT" if payload.is_present else "ABSENT"
     return {
         "message": f"Marked {res.data[0]['full_name']} as {status_label}.",
