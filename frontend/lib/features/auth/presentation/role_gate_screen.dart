@@ -206,7 +206,7 @@ class _RoleGateScreenState extends State<RoleGateScreen> {
                       title: 'Entrance Desk (User)',
                       subtitle:
                           'Verify online pre-registration, mark attendees Present at the door, and register Walk-In students.',
-                      icon: Icons.How_To_Reg,
+                      icon: Icons.how_to_reg,
                       accent: const Color(0xFF0284C7),
                       onTap: () => _promptPinAndEnter('ENTRANCE', 'Entrance Desk'),
                     ),
