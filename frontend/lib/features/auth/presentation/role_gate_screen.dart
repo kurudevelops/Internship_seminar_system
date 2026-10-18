@@ -405,7 +405,7 @@ class _RoleGateScreenState extends State<RoleGateScreen> {
                             ),
                             const SizedBox(height: 10),
                             const ConstrainedBox(
-                              constraints: BoxConstraints(maxWidth: 600),
+                              constraints: const BoxConstraints(maxWidth: 600),
                               child: Text(
                                 'Choose your assigned committee portal below. All check-ins, walk-in registrations, and fee collections synchronize across stations instantaneously.',
                                 style: TextStyle(
