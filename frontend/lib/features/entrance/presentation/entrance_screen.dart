@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/models/attendee_model.dart';
 import '../data/entrance_repository.dart';
@@ -20,6 +21,7 @@ class _EntranceScreenState extends State<EntranceScreen> {
   // Lookup & Check-In State
   List<AttendeeModel> _roster = [];
   bool _isLoading = false;
+  String _quickFilter = 'ALL'; // ALL, PRESENT, ABSENT, PRE_REGISTERED, WALK_IN
   final TextEditingController _searchCtrl = TextEditingController();
   Timer? _debounce;
 
@@ -34,6 +36,7 @@ class _EntranceScreenState extends State<EntranceScreen> {
   String _paymentMethod = 'CASH';
   late final TextEditingController _feeCtrl;
   AttendeeModel? _duplicateMatch;
+  bool _isCheckingDuplicate = false;
   Timer? _dupTimer;
   bool _isSubmitting = false;
 
@@ -64,11 +67,24 @@ class _EntranceScreenState extends State<EntranceScreen> {
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(msg),
-        backgroundColor: isError ? Colors.red.shade800 : Colors.green.shade800,
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w600)),
+        backgroundColor:
+            isError ? const Color(0xFFDC2626) : const Color(0xFF059669),
         behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
       ),
     );
+  }
+
+  String _formatTime(String? iso) {
+    if (iso == null || iso.isEmpty) return 'Not checked in';
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return DateFormat('hh:mm a').format(dt);
+    } catch (_) {
+      return iso;
+    }
   }
 
   Future<void> _loadRoster() async {
@@ -83,11 +99,23 @@ class _EntranceScreenState extends State<EntranceScreen> {
     }
   }
 
+  List<AttendeeModel> get _filteredRoster {
+    return _roster.where((item) {
+      if (_quickFilter == 'PRESENT') return item.isPresent;
+      if (_quickFilter == 'ABSENT') return !item.isPresent;
+      if (_quickFilter == 'PRE_REGISTERED') {
+        return item.registrationType == 'PRE_REGISTERED';
+      }
+      if (_quickFilter == 'WALK_IN') return item.registrationType == 'WALK_IN';
+      return true;
+    }).toList();
+  }
+
   Future<void> _togglePresent(AttendeeModel attendee) async {
     try {
       await _repo.setAttendance(attendee.studentId, !attendee.isPresent);
       _notify(
-        'Marked ${attendee.fullName} as ${!attendee.isPresent ? "PRESENT" : "ABSENT"}.',
+        '${attendee.fullName} marked as ${!attendee.isPresent ? "PRESENT" : "ABSENT"}.',
       );
       await _loadRoster();
       if (_duplicateMatch?.studentId == attendee.studentId) {
@@ -100,22 +128,30 @@ class _EntranceScreenState extends State<EntranceScreen> {
 
   void _scheduleDuplicateCheck() {
     _dupTimer?.cancel();
-    _dupTimer = Timer(const Duration(milliseconds: 350), _checkDuplicateLive);
+    _dupTimer =
+        Timer(const Duration(milliseconds: 350), _checkDuplicateLive);
   }
 
   Future<void> _checkDuplicateLive() async {
     final sid = _idCtrl.text.trim();
     final email = _emailCtrl.text.trim();
     if (sid.isEmpty && email.isEmpty) {
-      setState(() => _duplicateMatch = null);
+      setState(() {
+        _duplicateMatch = null;
+        _isCheckingDuplicate = false;
+      });
       return;
     }
+    setState(() => _isCheckingDuplicate = true);
     try {
       final res = await _repo.verifyOnline(studentId: sid, email: email);
       if (mounted) {
         setState(() => _duplicateMatch = res.registered ? res.attendee : null);
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isCheckingDuplicate = false);
+    }
   }
 
   Future<void> _submitWalkIn() async {
@@ -123,7 +159,7 @@ class _EntranceScreenState extends State<EntranceScreen> {
     setState(() => _isSubmitting = true);
     try {
       final amount = double.tryParse(_feeCtrl.text.trim()) ?? 0.0;
-      await _repo.registerWalkIn(
+      final created = await _repo.registerWalkIn(
         studentId: _idCtrl.text.trim(),
         fullName: _nameCtrl.text.trim(),
         email: _emailCtrl.text.trim(),
@@ -133,7 +169,7 @@ class _EntranceScreenState extends State<EntranceScreen> {
         amountPaid: _markPaidNow ? amount : 0.0,
         paymentMethod: _markPaidNow ? _paymentMethod : 'NONE',
       );
-      _notify('Walk-in registered successfully!');
+      _notify('Walk-in registered: ${created.fullName}');
       _idCtrl.clear();
       _nameCtrl.clear();
       _emailCtrl.clear();
@@ -143,6 +179,9 @@ class _EntranceScreenState extends State<EntranceScreen> {
         _tabIndex = 0;
       });
       await _loadRoster();
+      if (mounted) {
+        _showDigitalPassModal(created);
+      }
     } catch (e) {
       _notify(e.toString(), isError: true);
     } finally {
@@ -150,309 +189,826 @@ class _EntranceScreenState extends State<EntranceScreen> {
     }
   }
 
+  void _showDigitalPassModal(AttendeeModel attendee) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        contentPadding: const EdgeInsets.all(24),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 380),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0284C7), Color(0xFF1E3A8A)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            attendee.registrationType == 'WALK_IN'
+                                ? 'WALK-IN PASS'
+                                : 'ONLINE PRE-REGISTERED',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        Icon(
+                          attendee.isPresent
+                              ? Icons.verified
+                              : Icons.schedule,
+                          color: Colors.white,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      attendee.fullName,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'ID: ${attendee.studentId}  •  ${attendee.programSection}',
+                      style: const TextStyle(
+                        color: Color(0xFFE0F2FE),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              _passRow('Email', attendee.email),
+              _passRow(
+                'Attendance',
+                attendee.isPresent ? 'PRESENT IN VENUE' : 'ABSENT',
+              ),
+              _passRow('Check-In Time', _formatTime(attendee.timeIn)),
+              _passRow(
+                'Finance Status',
+                attendee.isPaid
+                    ? 'PAID (PHP ${attendee.amountPaid.toStringAsFixed(2)} - ${attendee.paymentMethod})'
+                    : 'UNPAID',
+              ),
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Done'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _passRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(color: Color(0xFF64748B), fontSize: 13),
+          ),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                color: Color(0xFF0F172A),
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final totalCount = _roster.length;
+    final presentCount = _roster.where((a) => a.isPresent).length;
+    final walkInCount =
+        _roster.where((a) => a.registrationType == 'WALK_IN').length;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0284C7),
+        backgroundColor: const Color(0xFF0F172A),
         foregroundColor: Colors.white,
-        title: const Text('Entrance Desk — Online Check & Walk-In Registration'),
+        elevation: 0,
+        toolbarHeight: 68,
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0EA5E9).withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Icon(
+                Icons.how_to_reg,
+                color: Color(0xFF38BDF8),
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 14),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Entrance Registration & Verification Desk',
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
+                  Text(
+                    'Verify online pre-registrations, check in attendees, or log walk-ins',
+                    style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
         actions: [
           IconButton(
             onPressed: _loadRoster,
             icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh Roster',
+            tooltip: 'Sync Roster',
           ),
-          TextButton.icon(
-            onPressed: widget.onSwitchRole,
-            icon: const Icon(Icons.swap_horiz, color: Colors.white),
-            label: const Text('Switch Role', style: TextStyle(color: Colors.white)),
+          const SizedBox(width: 6),
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: const BorderSide(color: Color(0xFF334155)),
+                backgroundColor: const Color(0xFF1E293B),
+              ),
+              onPressed: widget.onSwitchRole,
+              icon: const Icon(Icons.swap_horiz, size: 18),
+              label: const Text('Switch Station'),
+            ),
           ),
-          const SizedBox(width: 8),
         ],
       ),
       body: Column(
         children: [
+          // Sub-header with quick stats & mode switcher
           Container(
             color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-            child: SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(
-                  value: 0,
-                  icon: Icon(Icons.qr_code_scanner),
-                  label: Text('Check Online Registration & Mark Present'),
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+            child: Wrap(
+              spacing: 20,
+              runSpacing: 14,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 10,
+                  children: [
+                    _QuickStatPill(
+                      label: 'Loaded Roster',
+                      value: '$totalCount',
+                      color: const Color(0xFF0284C7),
+                    ),
+                    _QuickStatPill(
+                      label: 'Checked-In Present',
+                      value: '$presentCount',
+                      color: const Color(0xFF059669),
+                    ),
+                    _QuickStatPill(
+                      label: 'Walk-Ins',
+                      value: '$walkInCount',
+                      color: const Color(0xFF7C3AED),
+                    ),
+                  ],
                 ),
-                ButtonSegment(
-                  value: 1,
-                  icon: Icon(Icons.person_add_alt_1),
-                  label: Text('Register Walk-In Student'),
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(
+                      value: 0,
+                      icon: Icon(Icons.fact_check_outlined, size: 18),
+                      label: Text('Online Verification & Check-In'),
+                    ),
+                    ButtonSegment(
+                      value: 1,
+                      icon: Icon(Icons.person_add_alt_1, size: 18),
+                      label: Text('Walk-In Registration'),
+                    ),
+                  ],
+                  selected: {_tabIndex},
+                  onSelectionChanged: (s) =>
+                      setState(() => _tabIndex = s.first),
                 ),
               ],
-              selected: {_tabIndex},
-              onSelectionChanged: (s) => setState(() => _tabIndex = s.first),
             ),
           ),
-          const Divider(height: 1),
+          const Divider(height: 1, color: Color(0xFFE2E8F0)),
           Expanded(
-            child: _tabIndex == 0 ? _buildCheckInTab() : _buildWalkInTab(),
+            child: _tabIndex == 0 ? _buildLookupView() : _buildWalkInView(),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildCheckInTab() {
+  Widget _buildLookupView() {
+    final displayed = _filteredRoster;
+
     return Padding(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        children: [
-          TextField(
-            controller: _searchCtrl,
-            onChanged: (_) {
-              _debounce?.cancel();
-              _debounce = Timer(const Duration(milliseconds: 300), _loadRoster);
-            },
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white,
-              hintText:
-                  'Type Student ID, Full Name, or Section to check if already registered online...',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _searchCtrl.text.isNotEmpty
-                  ? IconButton(
-                      onPressed: () {
-                        _searchCtrl.clear();
-                        _loadRoster();
-                      },
-                      icon: const Icon(Icons.clear),
-                    )
-                  : null,
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Card(
-              color: Colors.white,
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _roster.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.search_off, size: 48, color: Colors.black38),
-                              const SizedBox(height: 10),
-                              const Text(
-                                'Student not found in Online Pre-Registration Roster.',
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                              ),
-                              const SizedBox(height: 12),
-                              FilledButton.icon(
-                                onPressed: () {
-                                  _idCtrl.text = _searchCtrl.text.trim();
-                                  _scheduleDuplicateCheck();
-                                  setState(() => _tabIndex = 1);
-                                },
-                                icon: const Icon(Icons.person_add),
-                                label: const Text('Register as Walk-In Instead'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : ListView.separated(
-                          itemCount: _roster.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, idx) {
-                            final item = _roster[idx];
-                            final isWalkIn = item.registrationType == 'WALK_IN';
-                            return ListTile(
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 8,
-                              ),
-                              title: Row(
-                                children: [
-                                  Flexible(
-                                    child: Text(
-                                      '${item.fullName} (${item.studentId})',
-                                      style: const TextStyle(fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Chip(
-                                    label: Text(
-                                      isWalkIn ? 'WALK-IN' : 'PRE-REGISTERED',
-                                      style: const TextStyle(fontSize: 11),
-                                    ),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Chip(
-                                    label: Text(
-                                      item.isPaid ? 'PAID' : 'UNPAID',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
-                                        color: item.isPaid
-                                            ? Colors.green.shade900
-                                            : Colors.red.shade900,
-                                      ),
-                                    ),
-                                    backgroundColor: item.isPaid
-                                        ? Colors.green.shade100
-                                        : Colors.red.shade100,
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                ],
-                              ),
-                              subtitle: Text('${item.programSection} • ${item.email}'),
-                              trailing: FilledButton.icon(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: item.isPresent
-                                      ? Colors.green.shade700
-                                      : const Color(0xFF0284C7),
-                                ),
-                                onPressed: () => _togglePresent(item),
-                                icon: Icon(
-                                  item.isPresent
-                                      ? Icons.check_circle
-                                      : Icons.login,
-                                ),
-                                label: Text(
-                                  item.isPresent
-                                      ? 'PRESENT (Tap to Undo)'
-                                      : 'Mark PRESENT',
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildWalkInTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(28.0),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 600),
+          constraints: const BoxConstraints(maxWidth: 1180),
+          child: Column(
+            children: [
+              // Search and filter bar
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: _searchCtrl,
+                        onChanged: (_) {
+                          _debounce?.cancel();
+                          _debounce = Timer(
+                            const Duration(milliseconds: 280),
+                            _loadRoster,
+                          );
+                        },
+                        decoration: InputDecoration(
+                          hintText:
+                              'Search by Student ID, Full Name, University Email, or Section (e.g., 2230001, Dela Cruz, BSCS 3A)...',
+                          prefixIcon: const Icon(
+                            Icons.search,
+                            color: Color(0xFF0284C7),
+                          ),
+                          suffixIcon: _searchCtrl.text.isNotEmpty
+                              ? IconButton(
+                                  onPressed: () {
+                                    _searchCtrl.clear();
+                                    _loadRoster();
+                                  },
+                                  icon: const Icon(Icons.clear),
+                                )
+                              : null,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            const Text(
+                              'Quick Filter:',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF64748B),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            _buildFilterChip('ALL', 'All Attendees'),
+                            const SizedBox(width: 8),
+                            _buildFilterChip('ABSENT', 'Pending Check-In'),
+                            const SizedBox(width: 8),
+                            _buildFilterChip('PRESENT', 'Already Present'),
+                            const SizedBox(width: 8),
+                            _buildFilterChip(
+                              'PRE_REGISTERED',
+                              'Pre-Registered Online',
+                            ),
+                            const SizedBox(width: 8),
+                            _buildFilterChip('WALK_IN', 'Walk-In Only'),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Roster Table Card
+              Expanded(
+                child: Card(
+                  clipBehavior: Clip.antiAlias,
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : displayed.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32.0),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Container(
+                                      padding: const EdgeInsets.all(18),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFF1F5F9),
+                                        borderRadius:
+                                            BorderRadius.circular(999),
+                                      ),
+                                      child: const Icon(
+                                        Icons.person_search_outlined,
+                                        size: 42,
+                                        color: Color(0xFF64748B),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    const Text(
+                                      'No Matching Online Pre-Registration Found',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w800,
+                                        color: Color(0xFF0F172A),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    const Text(
+                                      'If this student has not registered online, register them right now as a Walk-In.',
+                                      style: TextStyle(
+                                        color: Color(0xFF64748B),
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 20),
+                                    FilledButton.icon(
+                                      style: FilledButton.styleFrom(
+                                        backgroundColor:
+                                            const Color(0xFF0284C7),
+                                      ),
+                                      onPressed: () {
+                                        final q = _searchCtrl.text.trim();
+                                        if (q.isNotEmpty) {
+                                          _idCtrl.text = q;
+                                          _scheduleDuplicateCheck();
+                                        }
+                                        setState(() => _tabIndex = 1);
+                                      },
+                                      icon: const Icon(Icons.person_add_alt_1),
+                                      label: const Text(
+                                        'Transfer to Walk-In Registration',
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              itemCount: displayed.length,
+                              separatorBuilder: (_, __) => const Divider(
+                                height: 1,
+                                color: Color(0xFFF1F5F9),
+                              ),
+                              itemBuilder: (context, idx) {
+                                final item = displayed[idx];
+                                final isWalkIn =
+                                    item.registrationType == 'WALK_IN';
+                                final initials = item.fullName.isNotEmpty
+                                    ? item.fullName
+                                        .trim()
+                                        .substring(0, 1)
+                                        .toUpperCase()
+                                    : '?';
+
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 14,
+                                  ),
+                                  child: Wrap(
+                                    spacing: 16,
+                                    runSpacing: 12,
+                                    alignment: WrapAlignment.spaceBetween,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
+                                    children: [
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 22,
+                                            backgroundColor: item.isPresent
+                                                ? const Color(0xFFD1FAE5)
+                                                : const Color(0xFFE0F2FE),
+                                            child: Text(
+                                              initials,
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                                color: item.isPresent
+                                                    ? const Color(0xFF065F46)
+                                                    : const Color(0xFF0369A1),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 14),
+                                          ConstrainedBox(
+                                            constraints: const BoxConstraints(
+                                              maxWidth: 460,
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Wrap(
+                                                  spacing: 8,
+                                                  runSpacing: 4,
+                                                  crossAxisAlignment:
+                                                      WrapCrossAlignment.center,
+                                                  children: [
+                                                    Text(
+                                                      item.fullName,
+                                                      style: const TextStyle(
+                                                        fontSize: 15.5,
+                                                        fontWeight:
+                                                            FontWeight.w800,
+                                                        color:
+                                                            Color(0xFF0F172A),
+                                                      ),
+                                                    ),
+                                                    _StatusBadge(
+                                                      label: isWalkIn
+                                                          ? 'WALK-IN'
+                                                          : 'ONLINE PRE-REG',
+                                                      bgColor: isWalkIn
+                                                          ? const Color(
+                                                              0xFFF3E8FF,
+                                                            )
+                                                          : const Color(
+                                                              0xFFE0F2FE,
+                                                            ),
+                                                      textColor: isWalkIn
+                                                          ? const Color(
+                                                              0xFF6B21A8,
+                                                            )
+                                                          : const Color(
+                                                              0xFF0369A1,
+                                                            ),
+                                                    ),
+                                                    _StatusBadge(
+                                                      label: item.isPaid
+                                                          ? 'PAID'
+                                                          : 'UNPAID',
+                                                      bgColor: item.isPaid
+                                                          ? const Color(
+                                                              0xFFD1FAE5,
+                                                            )
+                                                          : const Color(
+                                                              0xFFFEE2E2,
+                                                            ),
+                                                      textColor: item.isPaid
+                                                          ? const Color(
+                                                              0xFF065F46,
+                                                            )
+                                                          : const Color(
+                                                              0xFF991B1B,
+                                                            ),
+                                                    ),
+                                                  ],
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  'ID: ${item.studentId}  •  ${item.programSection}  •  ${item.email}  •  ${_formatTime(item.timeIn)}',
+                                                  style: const TextStyle(
+                                                    fontSize: 12.5,
+                                                    color: Color(0xFF64748B),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            onPressed: () =>
+                                                _showDigitalPassModal(item),
+                                            icon: const Icon(
+                                              Icons.badge_outlined,
+                                              color: Color(0xFF64748B),
+                                            ),
+                                            tooltip: 'View Pass Details',
+                                          ),
+                                          const SizedBox(width: 8),
+                                          FilledButton.icon(
+                                            style: FilledButton.styleFrom(
+                                              backgroundColor: item.isPresent
+                                                  ? const Color(0xFF059669)
+                                                  : const Color(0xFF0284C7),
+                                            ),
+                                            onPressed: () =>
+                                                _togglePresent(item),
+                                            icon: Icon(
+                                              item.isPresent
+                                                  ? Icons.check_circle
+                                                  : Icons.login,
+                                              size: 18,
+                                            ),
+                                            label: Text(
+                                              item.isPresent
+                                                  ? 'PRESENT (Undo)'
+                                                  : 'Check-In PRESENT',
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String value, String label) {
+    final selected = _quickFilter == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: (_) => setState(() => _quickFilter = value),
+      selectedColor: const Color(0xFFE0F2FE),
+      labelStyle: TextStyle(
+        fontSize: 12,
+        fontWeight: FontWeight.w700,
+        color: selected ? const Color(0xFF0369A1) : const Color(0xFF475569),
+      ),
+    );
+  }
+
+  Widget _buildWalkInView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(28),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
           child: Card(
-            color: Colors.white,
             child: Padding(
-              padding: const EdgeInsets.all(28.0),
+              padding: const EdgeInsets.all(32.0),
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Walk-In Student Registration',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF3E8FF),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.person_add_alt_1,
+                                color: Color(0xFF7C3AED),
+                              ),
+                            ),
+                            const SizedBox(width: 14),
+                            const Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Walk-In Desk Registration',
+                                  style: TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w800,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                Text(
+                                  'Live duplicate detection checks the online database as you type',
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        if (_isCheckingDuplicate)
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                      ],
                     ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'Automatically checks if the student is already registered online as you type.',
-                      style: TextStyle(color: Colors.black54),
-                    ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
                     if (_duplicateMatch != null)
                       Container(
-                        padding: const EdgeInsets.all(16),
-                        margin: const EdgeInsets.only(bottom: 20),
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(18),
+                        margin: const EdgeInsets.only(bottom: 22),
                         decoration: BoxDecoration(
-                          color: Colors.amber.shade50,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.amber.shade400),
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFF59E0B)),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.warning_amber_rounded,
+                                  color: Color(0xFFB45309),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Duplicate Found: ${_duplicateMatch!.fullName} is Already Registered!',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      color: Color(0xFF92400E),
+                                      fontSize: 14.5,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
                             Text(
-                              'Already Registered Online: ${_duplicateMatch!.fullName}',
+                              'ID: ${_duplicateMatch!.studentId}  •  ${_duplicateMatch!.programSection}  •  '
+                              'Type: ${_duplicateMatch!.registrationType}  •  '
+                              'Attendance: ${_duplicateMatch!.isPresent ? "PRESENT" : "ABSENT"}',
                               style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
+                                fontSize: 13,
+                                color: Color(0xFF78350F),
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'ID: ${_duplicateMatch!.studentId} • ${_duplicateMatch!.programSection} • '
-                              'Status: ${_duplicateMatch!.isPresent ? "PRESENT" : "ABSENT"}',
-                            ),
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 12),
                             if (!_duplicateMatch!.isPresent)
                               FilledButton.icon(
-                                onPressed: () => _togglePresent(_duplicateMatch!),
-                                icon: const Icon(Icons.check),
-                                label: const Text('Mark Existing Student PRESENT Now'),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFFD97706),
+                                ),
+                                onPressed: () =>
+                                    _togglePresent(_duplicateMatch!),
+                                icon: const Icon(Icons.check_circle_outline),
+                                label: const Text(
+                                  'Mark Existing Student PRESENT Now',
+                                ),
                               ),
                           ],
                         ),
                       ),
-                    TextFormField(
-                      controller: _idCtrl,
-                      onChanged: (_) => _scheduleDuplicateCheck(),
-                      decoration: const InputDecoration(
-                        labelText: 'Student ID Number *',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (v) =>
-                          (v == null || v.trim().isEmpty) ? 'Required' : null,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            controller: _idCtrl,
+                            onChanged: (_) => _scheduleDuplicateCheck(),
+                            decoration: const InputDecoration(
+                              labelText: 'Student ID Number *',
+                              hintText: 'e.g., 2231234',
+                              prefixIcon: Icon(Icons.badge_outlined),
+                            ),
+                            validator: (v) => (v == null || v.trim().isEmpty)
+                                ? 'Required'
+                                : null,
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: TextFormField(
+                            controller: _sectionCtrl,
+                            decoration: const InputDecoration(
+                              labelText: 'Program & Section *',
+                              hintText: 'e.g., BSCS 3A',
+                              prefixIcon: Icon(Icons.school_outlined),
+                            ),
+                            validator: (v) => (v == null || v.trim().isEmpty)
+                                ? 'Required'
+                                : null,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 16),
                     TextFormField(
                       controller: _nameCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Full Name (Last, First M.I.) *',
-                        border: OutlineInputBorder(),
+                        labelText: 'Full Name (Last Name, First Name M.I.) *',
+                        hintText: 'e.g., Dela Cruz, Juan A.',
+                        prefixIcon: Icon(Icons.person_outline),
                       ),
                       validator: (v) =>
                           (v == null || v.trim().isEmpty) ? 'Required' : null,
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 16),
                     TextFormField(
                       controller: _emailCtrl,
                       onChanged: (_) => _scheduleDuplicateCheck(),
                       decoration: const InputDecoration(
                         labelText: 'University Email *',
-                        border: OutlineInputBorder(),
+                        hintText: 'e.g., 2231234@slu.edu.ph',
+                        prefixIcon: Icon(Icons.alternate_email),
                       ),
                       validator: (v) => (v == null || !v.contains('@'))
-                          ? 'Enter valid email'
+                          ? 'Valid email required'
                           : null,
                     ),
-                    const SizedBox(height: 14),
-                    TextFormField(
-                      controller: _sectionCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Program & Year/Section (e.g., BSCS 3A) *',
-                        border: OutlineInputBorder(),
+                    const SizedBox(height: 20),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 6,
                       ),
-                      validator: (v) =>
-                          (v == null || v.trim().isEmpty) ? 'Required' : null,
-                    ),
-                    const SizedBox(height: 12),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Mark as PRESENT immediately'),
-                      value: _markPresentNow,
-                      onChanged: (v) => setState(() => _markPresentNow = v),
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Paid seminar fee at entrance'),
-                      value: _markPaidNow,
-                      onChanged: (v) => setState(() => _markPaidNow = v),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Column(
+                        children: [
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text(
+                              'Mark as PRESENT immediately',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              'Logs check-in time upon walk-in registration',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                            value: _markPresentNow,
+                            onChanged: (v) =>
+                                setState(() => _markPresentNow = v),
+                          ),
+                          const Divider(height: 1),
+                          SwitchListTile(
+                            contentPadding: EdgeInsets.zero,
+                            title: const Text(
+                              'Collected seminar payment at entrance',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              'Optional: toggle on if paying right now',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                            value: _markPaidNow,
+                            onChanged: (v) => setState(() => _markPaidNow = v),
+                          ),
+                        ],
+                      ),
                     ),
                     if (_markPaidNow) ...[
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 16),
                       Row(
                         children: [
                           Expanded(
@@ -460,42 +1016,64 @@ class _EntranceScreenState extends State<EntranceScreen> {
                               controller: _feeCtrl,
                               keyboardType: TextInputType.number,
                               decoration: const InputDecoration(
-                                labelText: 'Amount Paid (PHP)',
-                                border: OutlineInputBorder(),
+                                labelText: 'Amount Collected (PHP)',
+                                prefixIcon: Icon(Icons.payments_outlined),
                               ),
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 14),
                           Expanded(
                             child: DropdownButtonFormField<String>(
                               value: _paymentMethod,
                               decoration: const InputDecoration(
-                                labelText: 'Method',
-                                border: OutlineInputBorder(),
+                                labelText: 'Payment Method',
                               ),
                               items: const [
-                                DropdownMenuItem(value: 'CASH', child: Text('CASH')),
-                                DropdownMenuItem(value: 'GCASH', child: Text('GCASH')),
+                                DropdownMenuItem(
+                                  value: 'CASH',
+                                  child: Text('CASH'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'GCASH',
+                                  child: Text('GCASH'),
+                                ),
                               ],
                               onChanged: (v) {
-                                if (v != null) setState(() => _paymentMethod = v);
+                                if (v != null) {
+                                  setState(() => _paymentMethod = v);
+                                }
                               },
                             ),
                           ),
                         ],
                       ),
                     ],
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton.icon(
-                        onPressed: (_isSubmitting || _duplicateMatch != null)
-                            ? null
-                            : _submitWalkIn,
-                        icon: const Icon(Icons.how_to_reg),
-                        label: const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 14),
-                          child: Text('Register Walk-In Student'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF0284C7),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        onPressed:
+                            (_isSubmitting || _duplicateMatch != null)
+                                ? null
+                                : _submitWalkIn,
+                        icon: _isSubmitting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.how_to_reg),
+                        label: Text(
+                          _markPresentNow
+                              ? 'Register Walk-In & Mark Present'
+                              : 'Register Walk-In Student',
                         ),
                       ),
                     ),
@@ -504,6 +1082,91 @@ class _EntranceScreenState extends State<EntranceScreen> {
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QuickStatPill extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _QuickStatPill({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatusBadge extends StatelessWidget {
+  final String label;
+  final Color bgColor;
+  final Color textColor;
+
+  const _StatusBadge({
+    required this.label,
+    required this.bgColor,
+    required this.textColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          color: textColor,
+          letterSpacing: 0.3,
         ),
       ),
     );
