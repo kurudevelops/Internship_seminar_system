@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/models/attendee_model.dart';
+import '../../../core/ui/station_shell.dart';
 import '../data/admin_repository.dart';
 
 class AdminScreen extends StatefulWidget {
@@ -415,80 +416,38 @@ class _AdminScreenState extends State<AdminScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0F172A),
-        foregroundColor: Colors.white,
-        elevation: 0,
-        toolbarHeight: 68,
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF8B5CF6).withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(12),
+      body: Column(
+        children: [
+          StationHeader(
+            stationLabel: 'Admin & Execom  •  Command Center',
+            stationIcon: Icons.admin_panel_settings_outlined,
+            stationAccent: const Color(0xFFA78BFA),
+            actions: [
+              HeaderButton(
+                icon: Icons.upload_file,
+                label: 'Import CSV',
+                onPressed: _showBulkCsvImportDialog,
               ),
-              child: const Icon(
-                Icons.admin_panel_settings_outlined,
-                color: Color(0xFFC4B5FD),
-                size: 22,
+              HeaderButton(
+                icon: Icons.person_add_alt_1,
+                label: 'Add Student',
+                filled: true,
+                fillColor: AppColors.indigo,
+                onPressed: () => _showCreateOrEditDialog(),
               ),
-            ),
-            const SizedBox(width: 14),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Admin & Execom Command Center',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                  ),
-                  Text(
-                    'Full turnout analytics, Pre-Registered vs. Walk-In breakdown & CRUD control',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                  ),
-                ],
+              HeaderIconButton(
+                icon: Icons.refresh,
+                tooltip: 'Refresh Data',
+                onPressed: _loadDashboard,
               ),
-            ),
-          ],
-        ),
-        actions: [
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.white,
-              side: const BorderSide(color: Color(0xFF334155)),
-              backgroundColor: const Color(0xFF1E293B),
-            ),
-            onPressed: _showBulkCsvImportDialog,
-            icon: const Icon(Icons.upload_file, size: 17),
-            label: const Text('Import CSV'),
+              HeaderButton(
+                icon: Icons.swap_horiz,
+                label: 'Switch Station',
+                onPressed: widget.onSwitchRole,
+              ),
+            ],
           ),
-          const SizedBox(width: 10),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF7C3AED),
-            ),
-            onPressed: () => _showCreateOrEditDialog(),
-            icon: const Icon(Icons.person_add_alt_1, size: 17),
-            label: const Text('Add Student'),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            onPressed: _loadDashboard,
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh Data',
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: IconButton(
-              onPressed: widget.onSwitchRole,
-              icon: const Icon(Icons.swap_horiz),
-              tooltip: 'Switch Station',
-            ),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
+          Expanded(child: SingleChildScrollView(
         padding: const EdgeInsets.all(28),
         child: Center(
           child: ConstrainedBox(
@@ -849,6 +808,8 @@ class _AdminScreenState extends State<AdminScreen> {
             ),
           ),
         ),
+      )),
+        ],
       ),
     );
   }

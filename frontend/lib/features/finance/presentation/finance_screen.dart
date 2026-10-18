@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/models/attendee_model.dart';
+import '../../../core/ui/station_shell.dart';
 import '../data/finance_repository.dart';
 
 class FinanceScreen extends StatefulWidget {
@@ -272,66 +273,26 @@ class _FinanceScreenState extends State<FinanceScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF0F172A),
-        foregroundColor: Colors.white,
-        elevation: 0,
-        toolbarHeight: 68,
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFF10B981).withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(12),
+      body: Column(
+        children: [
+          StationHeader(
+            stationLabel: 'Finance Portal  •  Collections Ledger',
+            stationIcon: Icons.account_balance_wallet_outlined,
+            stationAccent: const Color(0xFF10B981),
+            actions: [
+              HeaderIconButton(
+                icon: Icons.refresh,
+                tooltip: 'Sync Ledger',
+                onPressed: _loadLedger,
               ),
-              child: const Icon(
-                Icons.account_balance_wallet_outlined,
-                color: Color(0xFF34D399),
-                size: 22,
+              HeaderButton(
+                icon: Icons.swap_horiz,
+                label: 'Switch Station',
+                onPressed: widget.onSwitchRole,
               ),
-            ),
-            const SizedBox(width: 14),
-            const Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Finance & Collections Ledger',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                  ),
-                  Text(
-                    'Track Paid vs. Unpaid attendees, Cash & GCash channels, and Total Seminar Earnings',
-                    style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            onPressed: _loadLedger,
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Sync Ledger',
+            ],
           ),
-          const SizedBox(width: 6),
-          Padding(
-            padding: const EdgeInsets.only(right: 16),
-            child: OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                side: const BorderSide(color: Color(0xFF334155)),
-                backgroundColor: const Color(0xFF1E293B),
-              ),
-              onPressed: widget.onSwitchRole,
-              icon: const Icon(Icons.swap_horiz, size: 18),
-              label: const Text('Switch Station'),
-            ),
-          ),
-        ],
-      ),
-      body: SingleChildScrollView(
+          Expanded(child: SingleChildScrollView(
         padding: const EdgeInsets.all(28),
         child: Center(
           child: ConstrainedBox(
@@ -734,6 +695,8 @@ class _FinanceScreenState extends State<FinanceScreen> {
             ),
           ),
         ),
+      )),
+        ],
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/ui/station_shell.dart';
 import '../../entrance/presentation/entrance_screen.dart';
 import '../../admin/presentation/admin_screen.dart';
 import '../../finance/presentation/finance_screen.dart';
@@ -326,7 +327,7 @@ class _RoleGateScreenState extends State<RoleGateScreen> {
                                 ),
                               ),
                               Text(
-                                'Career Readiness & Practicum Orientation Portal',
+                                '${EventInfo.dateLabel}  •  ${EventInfo.venue}',
                                 style: TextStyle(
                                   color: Color(0xFF94A3B8),
                                   fontSize: 12,
