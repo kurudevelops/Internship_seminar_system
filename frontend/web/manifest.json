@@ -1,0 +1,11 @@
+{
+    "name": "Internship Seminar Management System",
+    "short_name": "Seminar System",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#0F172A",
+    "theme_color": "#1E3A8A",
+    "description": "Role-based Entrance, Admin/Execom, and Finance management.",
+    "orientation": "any",
+    "prefer_related_applications": false
+}
